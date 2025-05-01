@@ -3112,10 +3112,30 @@ class DataFrameGroupBy(GroupBy[DataFrame]):
         min_periods: int = 1,
         numeric_only: bool = False,
     ) -> DataFrame:
-        result = self._op_via_apply(
-            "corr", method=method, min_periods=min_periods, numeric_only=numeric_only
-        )
-        return result
+        if method not in ["pearson", "kendall", "spearman"]:
+            raise ValueError(f"Method {method} not recognized")
+
+        def _convert_timedelta(df):
+            for col in df.columns:
+                if is_timedelta64_dtype(df[col]):
+                    df[col] = df[col].view("int64") / 1e9  # convert to float (seconds)
+            return df
+
+        df = self._selected_obj
+
+        # filter only numeric and timedelta columns
+        df = df.select_dtypes(include=["number", "timedelta"])
+        df = _convert_timedelta(df)
+
+        grouped = df.groupby(self.grouper, group_keys=False)
+
+        def compute_corr(group):
+            if group.shape[1] < 2:
+                return group  # not enough columns to compute correlation
+            return group.corr(method=method, min_periods=min_periods, numeric_only=numeric_only)
+
+        return grouped.apply(compute_corr)
+
 
     @doc(DataFrame.cov.__doc__)
     def cov(
